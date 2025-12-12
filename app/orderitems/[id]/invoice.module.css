@@ -1,0 +1,91 @@
+
+/* app/orderitems/[id]/invoice.module.css */
+
+/* Anchor all rules under a local class to satisfy CSS Module "pure selector" requirement */
+.invoiceRoot {}
+
+/* ==== PRINT RULES (scoped) ==== */
+@media print {
+  /* Page box: remove default margins */
+  @page {
+    size: A4;
+    margin: 0; /* switch to 'Letter' if needed */
+  }
+
+  /* Reset top/bottom margins/padding near our invoice container */
+  /* :where(...) keeps selector simple and "pure" while scoping within .invoiceRoot */
+  .invoiceRoot :where(html, body) {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Remove padding on outer container during print to fill page width */
+  .invoiceRoot :where(.print-container) {
+    padding: 0 !important;
+    max-width: 100% !important;
+  }
+
+  /* Keep colors in print */
+  .invoiceRoot :where(body) {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Hide toolbar on print */
+  .invoiceRoot :where(.print\:hidden) {
+    display: none !important;
+  }
+
+  /* Remove shadows/rounded for crisp edges */
+  .invoiceRoot :where(.shadow, .shadow-sm, .shadow-md, .shadow-lg, .shadow-xl, .shadow-2xl) {
+    box-shadow: none !important;
+  }
+  .invoiceRoot :where(.rounded, .rounded-md, .rounded-lg) {
+    border-radius: 0 !important;
+  }
+
+  /* Avoid tables being clipped inside scroll wrappers */
+  .invoiceRoot :where(.print-no-overflow) {
+    overflow: visible !important;
+  }
+
+  /* Table pagination helpers (scoped) */
+  .invoiceRoot :where(table) {
+    page-break-inside: auto;
+    border-collapse: collapse;
+    width: 100%;
+  }
+
+  .invoiceRoot :where(thead) {
+    display: table-header-group; /* repeat header */
+  }
+
+  .invoiceRoot :where(tfoot) {
+    display: table-footer-group; /* totals/footer grouped */
+  }
+
+  .invoiceRoot :where(tr) {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .invoiceRoot :where(td, th) {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Compact cells to reduce whitespace in print */
+  .invoiceRoot :where(.table-cell-compact td, .table-cell-compact th) {
+    padding: 6px 8px !important;
+  }
+
+  /* Keep totals/signature blocks together */
+  .invoiceRoot :where(.totals-block) {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .invoiceRoot :where(.signature-block) {
+    page-break-inside: avoid;
+    break-inside: avoid;
+   }
+}
