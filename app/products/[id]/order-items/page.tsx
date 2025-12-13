@@ -33,7 +33,7 @@ export default async function ProductOrderItemsPage({
 
   // ✅ Calculate summary stats
   const totalRevenue = orderItems.reduce(
-    (sum, item) => sum + item.sellingPrice.toNumber() * item.quantity,
+    (sum, item) => sum + item.unitPrice.toNumber() * item.quantity,
     0
   );
 
@@ -130,16 +130,16 @@ export default async function ProductOrderItemsPage({
                 <td className="border px-4 py-2">{item.order.invoiceNumber}</td>
                 <td className="border px-4 py-2">{product.name}</td>
                 <td className="border px-4 py-2">{product.id}</td>
-                <td className="border px-4 py-2">{item.order.customerName}</td>
+                <td className="border px-4 py-2">{item.order.customerId}</td>
                 <td className="border px-4 py-2">
                   ₹{product.price.toFixed(2)}
                 </td>
                 <td className="border px-4 py-2">
-                  ₹{item.sellingPrice.toNumber().toFixed(2)}
+                  ₹{item.unitPrice.toNumber().toFixed(2)}
                 </td>
                 <td className="border px-4 py-2">{item.quantity}</td>
                 <td className="border px-4 py-2">
-                  ₹{(item.sellingPrice.toNumber() * item.quantity).toFixed(2)}
+                  ₹{(item.unitPrice.toNumber() * item.quantity).toFixed(2)}
                 </td>
               </tr>
             ))}

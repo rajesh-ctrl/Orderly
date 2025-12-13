@@ -270,6 +270,7 @@ model OrderItem {
   product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
   order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
+  @@index([organisationId])
   @@index([productId])
   @@index([orderId])
 }
@@ -285,14 +286,14 @@ model Purchase {
   userId         String?
   currency       String
 
+  // snapshot of calculation
+  taxInclusive Boolean @default(false)
+
   // Lifecycle status
   status String @default("Pending") // Pending, Posted, Paid, Cancelled
 
   // Optional supplier bill number (make org-unique if desired)
-  billNumber String?
-
-  reference String?
-  notes     String?
+  poNumber String
 
   // Totals
   subtotal       Decimal @db.Decimal(12, 2)
@@ -313,9 +314,9 @@ model Purchase {
   supplier Supplier       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   contact  Contact?       @relation("PurchaseContact", fields: [contactId], references: [id], onDelete: SetNull)
   items    PurchaseItem[]
-  // Uncomment to enforce unique bill number per org:
-  // @@unique([organisationId, billNumber])
 
+  // Uncomment to enforce unique bill number per org:
+  @@unique([organisationId, poNumber])
   @@index([organisationId])
   @@index([supplierId])
   @@index([contactId])
@@ -328,12 +329,13 @@ model PurchaseItem {
 
   productId   Int // REQUIRED to adjust stock
   productname String
-  sku         String?
-  HSN         String?
+  sku         String
+  HSN         String
 
-  quantity   Int
-  unitPrice  Decimal @db.Decimal(10, 2)
-  taxRatePct Decimal @db.Decimal(5, 2)
+  quantity    Int
+  unitPrice   Decimal @db.Decimal(10, 2)
+  actualprice Decimal @db.Decimal(10, 2) // actual per-unit charged (after discount)
+  taxRatePct  Decimal @db.Decimal(5, 2)
 
   lineTaxAmount Decimal @db.Decimal(12, 2)
   lineTotal     Decimal @db.Decimal(12, 2)

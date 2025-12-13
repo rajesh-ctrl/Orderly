@@ -41,7 +41,7 @@ EditOrderFormProps) {
           className="border p-2 rounded"
         >
           <option value="Pending">Pending</option>
-          <option value="Completed">Completed</option>
+          <option value="Paid">Paid</option>
           <option value="Cancelled">Cancelled</option>
         </select>
         <button

@@ -6,7 +6,7 @@ import { prisma } from '@/lib/prisma'
 // import { Prisma } from '@prisma/client' // <-- use @prisma/client
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { requireUser } from '@/lib/auth'
+import { requireUser, requireVerifiedUser } from '@/lib/auth'
 // import { PrismaClient } from '@prisma/client/extension'
 import { Prisma } from '@/generated/prisma/client'
 
@@ -174,14 +174,121 @@ export async function deleteProduct(formData: FormData) {
     redirect('/error?message=Forbidden: Switch to product’s organisation to delete it')
   }
 
-  // Prevent deletion if linked to orders
-  const linkedOrders = await prisma.orderItem.count({ where: { productId: id } })
-  if (linkedOrders > 0) {
-    redirect('/error?message=Cannot delete product linked to existing orders')
+  // Prevent deletion if linked to purchases
+  const linkedpurchases = await prisma.purchaseItem.count({ where: { productId: id } })
+  if (linkedpurchases > 0) {
+    redirect('/error?message=Cannot delete product linked to existing purchases')
   }
 
   await prisma.product.delete({ where: { id } })
 
   revalidatePath('/products')
   redirect('/products?delete=true')
+}
+
+
+
+
+/* ============================================================================
+ * UPDATE purchase STATUS
+ * Stock adjustments:
+ *   - Pending/Paid -> Cancelled : restore stock
+ *   - Cancelled -> Pending/Paid : re-decrement stock
+ * ========================================================================== */
+export async function updatePurchaseStatus(formData: FormData) {
+  const { appUser } = await requireVerifiedUser()
+  if (!appUser.currentOrganisationId) redirect('/error?message=No current organisation set')
+  const orgId = appUser.currentOrganisationId!
+
+  const purchaseId = Number(formData.get('purchaseId'))
+  const newStatusRaw = String(formData.get('status') ?? '').trim()
+  const newStatus = newStatusRaw || 'Pending'
+
+  if (!Number.isFinite(purchaseId) || purchaseId <= 0) {
+    redirect('/error?message=Invalid form submission')
+  }
+
+  const purchase = await prisma.purchase.findUnique({
+    where: { id: purchaseId },
+    include: { items: true },
+  })
+  if (!purchase) redirect('/error?message=purchase not found')
+  if (purchase.organisationId !== orgId) redirect('/error?message=Forbidden: wrong organisation')
+
+  const oldStatus = purchase.status
+
+  await prisma.$transaction(async (tx) => {
+    if ((oldStatus === 'Pending' || oldStatus === 'Paid') && newStatus === 'Cancelled') {
+      // Restore stock
+      for (const item of purchase.items) {
+        await tx.product.update({
+          where: { id: item.productId },
+          data: { stock: { increment: item.quantity } },
+        })
+      }
+    } else if (oldStatus === 'Cancelled' && (newStatus === 'Pending' || newStatus === 'Paid')) {
+      // Re-decrement stock
+      for (const item of purchase.items) {
+        await tx.product.update({
+          where: { id: item.productId },
+          data: { stock: { decrement: item.quantity } },
+        })
+      }
+    }
+
+    await tx.purchase.update({
+      where: { id: purchaseId },
+      data: { status: newStatus, updatedByEmail: String(appUser.email ?? '') },
+    })
+  })
+
+  revalidatePath('/purchases')
+  redirect('/purchases?update=true')
+}
+
+/* ============================================================================
+ * DELETE purchase (ADMIN-ONLY)
+ * - Only ADMIN can delete purchases.
+ * - Restores stock if the purchase wasn't already Cancelled (to keep inventory correct).
+ * ========================================================================== */
+export async function deletepurchase(formData: FormData) {
+  const { appUser } = await requireVerifiedUser()
+
+  // ✅ Admin-only guard
+  const isAdmin = String((appUser as any).role ?? '').toUpperCase() === 'ADMIN'
+  if (!isAdmin) {
+    redirect('/error?message=Only admins can delete purchases')
+  }
+
+  if (!appUser.currentOrganisationId) {
+    redirect('/error?message=No current organisation set')
+  }
+  const orgId = appUser.currentOrganisationId!
+
+  const id = Number(formData.get('id'))
+  if (!id || Number.isNaN(id)) redirect('/error?message=Invalid purchase ID')
+
+  const purchase = await prisma.purchase.findUnique({
+    where: { id },
+    include: { items: true },
+  })
+  if (!purchase) redirect('/error?message=purchase not found')
+  if (purchase.organisationId !== orgId) redirect('/error?message=Forbidden: wrong organisation')
+
+  await prisma.$transaction(async (tx) => {
+    // If not already cancelled, restore stock before delete
+    if (purchase.status !== 'Cancelled') {
+      for (const item of purchase.items) {
+        await tx.product.update({
+          where: { id: item.productId },
+          data: { stock: { increment: item.quantity } },
+        })
+      }
+    }
+
+    await tx.purchase.delete({ where: { id } })
+  })
+
+  revalidatePath('/purchases')
+  redirect('/purchases?delete=true')
 }

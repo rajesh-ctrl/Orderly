@@ -16,7 +16,7 @@ export default async function Home() {
   const productsCount = await prisma.product.count();
   const ordersCount = await prisma.order.count();
   const totalRevenue = await prisma.order.aggregate({
-    _sum: { totalAmount: true },
+    _sum: { total: true },
   });
 
   // Orders by month (last 6 months)
@@ -33,14 +33,14 @@ export default async function Home() {
   // Orders by status
   const ordersByStatus = await prisma.order.groupBy({
     by: ["status"],
-    _sum: { totalAmount: true },
+    _sum: { total: true },
   });
 
   // Top products by revenue
   const topProducts = await prisma.orderItem.groupBy({
     by: ["productId"],
-    _sum: { sellingPrice: true },
-    orderBy: { _sum: { sellingPrice: "desc" } },
+    _sum: { unitPrice: true },
+    orderBy: { _sum: { unitPrice: "desc" } },
     take: 5,
   });
 
@@ -55,9 +55,9 @@ export default async function Home() {
 
   // Top customers by spend
   const topCustomers = await prisma.order.groupBy({
-    by: ["customerName"],
-    _sum: { totalAmount: true },
-    orderBy: { _sum: { totalAmount: "desc" } },
+    by: ["customerId"],
+    _sum: { total: true },
+    orderBy: { _sum: { total: "desc" } },
     take: 5,
   });
 
@@ -89,7 +89,7 @@ export default async function Home() {
 
           <p className="text-2xl font-bold">
             {formatCurrency(
-              Math.round(totalRevenue._sum.totalAmount?.toNumber() || 0)
+              Math.round(totalRevenue._sum.total?.toNumber() || 0)
             )}{" "}
           </p>
         </Link>
@@ -135,9 +135,7 @@ export default async function Home() {
                   {status.status}
                 </Link>
                 <span>
-                  {formatCurrency(
-                    Math.round(Number(status._sum.totalAmount || 0))
-                  )}
+                  {formatCurrency(Math.round(Number(status._sum.total || 0)))}
                 </span>
               </li>
             ))}
@@ -159,7 +157,7 @@ export default async function Home() {
                 >
                   {productMap[p.productId] || "Unknown"}
                 </Link>
-                <span>{formatCurrency(Number(p._sum.sellingPrice || 0))}</span>
+                <span>{formatCurrency(Number(p._sum.unitPrice || 0))}</span>
               </li>
             ))}
           </ul>
@@ -173,14 +171,14 @@ export default async function Home() {
               <li key={i} className="flex justify-between py-1">
                 <Link
                   href={`/orders?customer=${encodeURIComponent(
-                    c.customerName ?? ""
+                    c.customerId ?? ""
                   )}`}
                   className="text-blue-600 hover:underline"
                 >
-                  {c.customerName ?? "Unknown"}
+                  {c.customerId ?? "Unknown"}
                 </Link>
 
-                <span>{formatCurrency(Number(c._sum.totalAmount || 0))}</span>
+                <span>{formatCurrency(Number(c._sum?.total || 0))}</span>
               </li>
             ))}
           </ul>

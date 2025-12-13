@@ -4,11 +4,12 @@
 import { useMemo, useState } from "react";
 import { addPurchase } from "../purchase";
 
+// ===== Types (align with your data) =====
 type Product = {
   id: number;
   name: string;
-  price: number;
-  taxRatePct: number;
+  price: number; // catalog unit price snapshot
+  taxRatePct: number; // default product tax %
   currency: string;
   sku: string;
   HSN: string;
@@ -20,6 +21,7 @@ type Contact = { id: number; name: string; supplierId: number | null };
 type TaxComponent = { name: string; percentage: number };
 type AdditionalCharges = { name: string; amount: number };
 
+// ===== Helpers =====
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 function formatMoney(n: number, currency: string) {
@@ -47,7 +49,7 @@ export default function AddPurchaseForm({
   suppliers: Supplier[];
   contacts: Contact[];
 }) {
-  // Header
+  // ===== Header state =====
   const [supplierId, setSupplierId] = useState<number | "">("");
   const [supplierQuery, setSupplierQuery] = useState<string>("");
   const [supplierOpen, setSupplierOpen] = useState<boolean>(false);
@@ -58,17 +60,22 @@ export default function AddPurchaseForm({
 
   const [currency, setCurrency] = useState<string>("INR");
   const [status, setStatus] = useState<string>("Pending");
-  const [reference, setReference] = useState<string>(""); // PO No (optional)
 
-  // Items
+  // ===== Tax / Charges =====
+  const [taxInclusive, setTaxInclusive] = useState<boolean>(false); // schema default = false
+  const [taxComponents, setTaxComponents] = useState<TaxComponent[]>([]);
+  const [additionalCharges, setAdditionalCharges] =
+    useState<AdditionalCharges | null>(null);
+
+  // ===== Items =====
   const [items, setItems] = useState<
     {
       productId: number | "";
-      query: string;
+      query: string; // combobox query (Name/SKU/HSN)
       quantity: number;
-      unitPrice: number; // EXCL tax
-      taxPct: number;
-      open: boolean;
+      unitPrice: number; // user-entered per-unit (EXCL tax)
+      taxPct: number; // per-line tax %
+      open: boolean; // product dropdown visibility
     }[]
   >([
     {
@@ -81,12 +88,7 @@ export default function AddPurchaseForm({
     },
   ]);
 
-  // Tax components & Other charges
-  const [taxComponents, setTaxComponents] = useState<TaxComponent[]>([]);
-  const [additionalCharges, setAdditionalCharges] =
-    useState<AdditionalCharges | null>(null);
-
-  // Helpers
+  // ===== Helpers =====
   const getProduct = (id: number | "") =>
     typeof id === "number" ? products.find((p) => p.id === id) : undefined;
 
@@ -104,7 +106,7 @@ export default function AddPurchaseForm({
   const filterSuppliers = (q: string) => {
     const x = (q || "").trim().toLowerCase();
     if (!x) return suppliers;
-    return suppliers.filter((s) => s.name.toLowerCase().includes(x));
+    return suppliers.filter((c) => c.name.toLowerCase().includes(x));
   };
 
   const filteredContacts = useMemo(() => {
@@ -119,7 +121,7 @@ export default function AddPurchaseForm({
     return list.filter((c) => c.name.toLowerCase().includes(x));
   };
 
-  // Item handlers
+  // ===== Item handlers =====
   const addRow = () =>
     setItems((prev) => [
       ...prev,
@@ -156,7 +158,7 @@ export default function AddPurchaseForm({
         const p = getProduct(pid);
         if (p) {
           row.unitPrice = Number(p.price); // EXCL tax
-          row.taxPct = Number(p.taxRatePct); // default tax
+          row.taxPct = Number(p.taxRatePct); // default product tax
           row.quantity = 1;
           row.query = `${p.name} [${p.sku}] [${p.HSN}]`;
           row.open = false;
@@ -194,65 +196,92 @@ export default function AddPurchaseForm({
     });
   };
 
-  // Tax components (max 2, optional; sum doesn’t need to be 100 if your policy differs)
+  // ===== Tax Components (max 2, sum must be 100 when inclusive) =====
   const addTaxComponent = () => {
-    if (taxComponents.length >= 2) return;
+    if (taxComponents.length >= 2) return; // cap at two
     const defaultPct = taxComponents.length === 0 ? 100 : 50;
     setTaxComponents((prev) => [...prev, { name: "", percentage: defaultPct }]);
   };
+
   const updateTaxComponent = (idx: number, patch: Partial<TaxComponent>) =>
     setTaxComponents((prev) =>
       prev.map((t, i) => (i === idx ? { ...t, ...patch } : t))
     );
+
   const removeTaxComponent = (idx: number) =>
     setTaxComponents((prev) => prev.filter((_, i) => i !== idx));
 
-  // Additional charges (single)
+  // ===== Additional Charges (only one) =====
   const addAdditionalCharges = () => {
     if (!additionalCharges) setAdditionalCharges({ name: "", amount: 0 });
   };
   const removeAdditionalCharges = () => setAdditionalCharges(null);
 
-  // Totals preview
+  // ===== Totals preview =====
   const totals = useMemo(() => {
-    let base = 0;
+    let baseExcl = 0;
     let tax = 0;
+
     for (const row of items) {
       if (!row.productId || typeof row.productId !== "number") continue;
       const qty = Number(row.quantity);
       const rate = (Number(row.taxPct) || 0) / 100;
-      const lineBase = round2(Number(row.unitPrice) * qty); // EXCL tax
-      base += lineBase;
-      tax += round2(lineBase * rate);
+      const base = round2(Number(row.unitPrice) * qty); // unit price is EXCL tax
+      baseExcl += base;
+      if (taxInclusive) tax += round2(base * rate);
     }
-    const incl = round2(base + tax);
-    const grand = round2(incl + (additionalCharges?.amount || 0));
-    return { base: round2(base), tax: round2(tax), incl, grand };
-  }, [items, additionalCharges]);
 
-  // Rendering
+    const incl = round2(baseExcl + tax);
+    const grand = round2(incl + (additionalCharges?.amount || 0));
+
+    return { excl: round2(baseExcl), tax: round2(tax), incl, grand };
+  }, [items, taxInclusive, additionalCharges]);
+
+  // ===== Tax components sum must be exactly 100 when inclusive =====
+  const taxComponentsSum = useMemo(
+    () =>
+      round2(
+        taxComponents.reduce(
+          (s, t) => s + (Number.isFinite(t.percentage) ? t.percentage : 0),
+          0
+        )
+      ),
+    [taxComponents]
+  );
+  const remainingPct = useMemo(
+    () => round2(100 - taxComponentsSum),
+    [taxComponentsSum]
+  );
+  const taxComponentsValid = !taxInclusive
+    ? true
+    : taxComponents.length > 0 &&
+      taxComponents.length <= 2 &&
+      Math.abs(taxComponentsSum - 100) < 0.000001;
+
+  // ===== Filters (Supplier/Contact) =====
+  const supplierList = filterSuppliers(supplierQuery);
+  const contactList = filterContacts(contactQuery);
+
+  // ===== Render =====
   return (
     <div className="p-4 md:p-6 w-full max-w-8xl mx-auto">
-      <h1 className="text-xl md:text-2xl font-bold mb-2">
-        Create Purchase Order
-      </h1>
+      <h1 className="text-xl md:text-2xl font-bold mb-2">Add Purchase</h1>
       <h3 className="text-sm md:text-base font-light mb-6">
-        Record a new Purchase Order to update stock and accounts
+        Register a new purchase to generate purchase order
       </h3>
 
-      {/* IMPORTANT: no onSubmit prop — rely on action={addPurchase} */}
       <form
         action={addPurchase}
         className="flex flex-col gap-4 bg-gray-50 p-4 rounded shadow"
       >
-        {/* Supplier / Contact */}
+        {/* Header: Supplier / Contact */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Supplier combobox */}
           <div className="relative">
             <span className="block text-sm text-gray-700 mb-1">Supplier</span>
             <input
               type="text"
-              className="w-full border bg-white border-gray-300 p-2 rounded text-sm md:text-base"
+              className="w-full bpurchase bg-white bpurchase-gray-300 p-2 rounded text-sm md:text-base"
               value={supplierQuery}
               onFocus={() => setSupplierOpen(true)}
               onChange={(e) => setSupplierQuery(e.target.value)}
@@ -260,26 +289,26 @@ export default function AddPurchaseForm({
               required
             />
             {supplierOpen && (
-              <div className="absolute z-20 mt-1 w-full max-h-60 overflow-auto border border-gray-300 bg-white rounded shadow">
-                {filterSuppliers(supplierQuery).length === 0 ? (
+              <div className="absolute z-20 mt-1 w-full max-h-60 overflow-auto bpurchase bpurchase-gray-300 bg-white rounded shadow">
+                {supplierList.length === 0 ? (
                   <div className="px-3 py-2 text-sm text-gray-500">
                     No matches
                   </div>
                 ) : (
-                  filterSuppliers(supplierQuery).map((s) => (
+                  supplierList.map((c) => (
                     <button
-                      key={s.id}
+                      key={c.id}
                       type="button"
                       onClick={() => {
-                        setSupplierId(s.id);
-                        setSupplierQuery(s.name);
+                        setSupplierId(c.id);
+                        setSupplierQuery(c.name);
                         setSupplierOpen(false);
                         setContactId("");
                         setContactQuery("");
                       }}
                       className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100"
                     >
-                      {s.name}
+                      {c.name}
                     </button>
                   ))
                 )}
@@ -294,12 +323,12 @@ export default function AddPurchaseForm({
             )}
           </div>
 
-          {/* Contact combobox (supplier-scoped) */}
+          {/* Contact combobox */}
           <div className="relative">
             <span className="block text-sm text-gray-700 mb-1">Contact</span>
             <input
               type="text"
-              className="w-full border bg-white border-gray-300 p-2 rounded text-sm md:text-base"
+              className="w-full bpurchase bg-white bpurchase-gray-300 p-2 rounded text-sm md:text-base"
               value={contactQuery}
               onFocus={() => setContactOpen(true)}
               onChange={(e) => setContactQuery(e.target.value)}
@@ -307,13 +336,13 @@ export default function AddPurchaseForm({
               disabled={!supplierId}
             />
             {contactOpen && (
-              <div className="absolute z-20 mt-1 w-full max-h-60 overflow-auto border border-gray-300 bg-white rounded shadow">
-                {filterContacts(contactQuery).length === 0 ? (
+              <div className="absolute z-20 mt-1 w-full max-h-60 overflow-auto bpurchase bpurchase-gray-300 bg-white rounded shadow">
+                {contactList.length === 0 ? (
                   <div className="px-3 py-2 text-sm text-gray-500">
                     No matches
                   </div>
                 ) : (
-                  filterContacts(contactQuery).map((ct) => (
+                  contactList.map((ct) => (
                     <button
                       key={ct.id}
                       type="button"
@@ -336,26 +365,26 @@ export default function AddPurchaseForm({
           </div>
         </div>
 
-        {/* Currency / Status / Reference */}
+        {/* Currency / Status / Tax Mode */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <label className="flex flex-col gap-2">
             <span className="text-sm text-gray-700">Currency</span>
             <select
               name="currency"
-              className="border bg-white border-gray-300 p-2 rounded w-full text-sm md:text-base"
+              className="bpurchase bg-white bpurchase-gray-300 p-2 rounded w-full text-sm md:text-base"
               value={currency}
               onChange={(e) => setCurrency(e.target.value)}
               required
             >
-              <option value="INR">INR</option>
-              <option value="USD">USD</option>
-              <option value="EUR">EUR</option>
-              <option value="GBP">GBP</option>
-              <option value="AED">AED</option>
-              <option value="SGD">SGD</option>
-              <option value="AUD">AUD</option>
-              <option value="CAD">CAD</option>
-              <option value="JPY">JPY</option>
+              <option value="INR">INR — Indian Rupee</option>
+              <option value="USD">USD — US Dollar</option>
+              <option value="EUR">EUR — Euro</option>
+              <option value="GBP">GBP — British Pound</option>
+              <option value="AED">AED — UAE Dirham</option>
+              <option value="SGD">SGD — Singapore Dollar</option>
+              <option value="AUD">AUD — Australian Dollar</option>
+              <option value="CAD">CAD — Canadian Dollar</option>
+              <option value="JPY">JPY — Japanese Yen</option>
             </select>
           </label>
 
@@ -363,43 +392,68 @@ export default function AddPurchaseForm({
             <span className="text-sm text-gray-700">Status</span>
             <select
               name="status"
-              className="border bg-white border-gray-300 p-2 rounded w-full text-sm md:text-base"
+              className="bpurchase bg-white bpurchase-gray-300 p-2 rounded w-full text-sm md:text-base"
               value={status}
               onChange={(e) => setStatus(e.target.value)}
             >
               <option value="Pending">Pending</option>
-              <option value="Posted">Posted</option>
               <option value="Paid">Paid</option>
               <option value="Cancelled">Cancelled</option>
             </select>
           </label>
 
-          <label className="flex flex-col gap-2">
-            <span className="text-sm text-gray-700">PO Reference</span>
+          {/* Tax Mode toggle */}
+          <div className="flex flex-col gap-2">
+            <span className="text-sm text-gray-700">Tax Mode</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={taxInclusive}
+              onClick={() => setTaxInclusive((v) => !v)}
+              className={`p-2 rounded bpurchase transition ${
+                taxInclusive
+                  ? "bg-cyan-500 text-white bpurchase-cyan-600"
+                  : "bg-gray-100 bpurchase-gray-300"
+              }`}
+              title="Toggle whether purchase totals include tax"
+            >
+              {taxInclusive ? "Inclusive (tax applied)" : "Exclusive (no tax)"}
+            </button>
             <input
-              type="text"
-              name="reference"
-              className="border bg-white border-gray-300 p-2 rounded w-full text-sm md:text-base"
-              value={reference}
-              onChange={(e) => setReference(e.target.value)}
-              placeholder="Optional"
+              type="hidden"
+              name="taxInclusive"
+              value={String(taxInclusive)}
             />
-          </label>
+          </div>
         </div>
 
-        {/* Line Items */}
+        {/* ===== Line Items ===== */}
         <div className="space-y-3">
           {items.map((row, index) => {
             const p = getProduct(row.productId);
             const list = filterProducts(row.query);
+
+            // Line total (always EXCL tax)
             const lineTotalExcl = round2(
               Number(row.unitPrice) * Number(row.quantity)
             );
 
+            // Catalog vs discount/markup
+            const hasCatalog = p && Number(p.price) > 0;
+            const diffPct = hasCatalog
+              ? round2(
+                  ((Number(p!.price) - Number(row.unitPrice)) /
+                    Number(p!.price)) *
+                    100
+                )
+              : 0;
+            const isDiscount = hasCatalog && diffPct > 0;
+            const isMarkup = hasCatalog && diffPct < 0;
+
             return (
               <div
                 key={index}
-                className="flex flex-wrap items-end gap-2 md:gap-3 border border-gray-200 p-3 rounded bg-white"
+                className="flex flex-wrap items-end gap-2 md:gap-3 bpurchase bpurchase-gray-200 p-3 rounded bg-white"
               >
                 {/* Product combobox */}
                 <div className="relative flex-1 min-w-[220px]">
@@ -408,14 +462,14 @@ export default function AddPurchaseForm({
                   </span>
                   <input
                     type="text"
-                    className="w-full border bg-white border-gray-300 p-2 rounded text-sm font-mono"
+                    className="w-full bpurchase bg-white bpurchase-gray-300 p-2 rounded text-sm font-mono"
                     value={row.query}
                     onFocus={() => updateItem(index, "open", true)}
                     onChange={(e) => updateItem(index, "query", e.target.value)}
                     placeholder="Type to search..."
                   />
                   {row.open && (
-                    <div className="absolute z-20 mt-1 w-full max-h-52 overflow-auto border border-gray-300 bg-white rounded shadow">
+                    <div className="absolute z-20 mt-1 w-full max-h-52 overflow-auto bpurchase bpurchase-gray-300 bg-white rounded shadow">
                       {list.length === 0 ? (
                         <div className="px-3 py-2 text-sm text-gray-500">
                           No matches
@@ -448,12 +502,22 @@ export default function AddPurchaseForm({
                     />
                   )}
 
-                  {/* Minimal context */}
+                  {/* Catalog vs Discount/Markup context (under product) */}
                   {p && (
                     <div className="mt-1 text-[11px] text-gray-600">
                       <span>
                         Catalog: {formatMoney(Number(p.price), currency)}
                       </span>
+                      {isDiscount && (
+                        <span className="ml-2 text-green-700">
+                          · Disc {Math.abs(diffPct).toFixed(2)}%
+                        </span>
+                      )}
+                      {isMarkup && (
+                        <span className="ml-2 text-orange-700">
+                          · Markup {Math.abs(diffPct).toFixed(2)}%
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -461,7 +525,7 @@ export default function AddPurchaseForm({
                 {/* SKU */}
                 <div className="w-32">
                   <span className="block text-xs text-gray-700 mb-1">SKU</span>
-                  <div className="border bg-gray-50 border-gray-300 p-2 rounded text-sm font-mono">
+                  <div className="bpurchase bg-gray-50 bpurchase-gray-300 p-2 rounded text-sm font-mono">
                     {p?.sku ?? ""}
                   </div>
                 </div>
@@ -469,7 +533,7 @@ export default function AddPurchaseForm({
                 {/* HSN */}
                 <div className="w-28">
                   <span className="block text-xs text-gray-700 mb-1">HSN</span>
-                  <div className="border bg-gray-50 border-gray-300 p-2 rounded text-sm font-mono">
+                  <div className="bpurchase bg-gray-50 bpurchase-gray-300 p-2 rounded text-sm font-mono">
                     {p?.HSN ?? ""}
                   </div>
                 </div>
@@ -480,7 +544,7 @@ export default function AddPurchaseForm({
                   <input
                     type="number"
                     name="taxRatePct"
-                    className="border bg-white border-gray-300 p-2 rounded text-sm"
+                    className="bpurchase bg-white bpurchase-gray-300 p-2 rounded text-sm"
                     step={0.01}
                     min={0}
                     value={Number.isFinite(row.taxPct) ? row.taxPct : 0}
@@ -498,7 +562,7 @@ export default function AddPurchaseForm({
                   <input
                     type="number"
                     name="quantity"
-                    className="border bg-white border-gray-300 p-2 rounded text-sm"
+                    className="bpurchase bg-white bpurchase-gray-300 p-2 rounded text-sm"
                     min={1}
                     value={Number.isFinite(row.quantity) ? row.quantity : 1}
                     onChange={(e) =>
@@ -517,7 +581,7 @@ export default function AddPurchaseForm({
                   <input
                     type="number"
                     name="unitPrice"
-                    className="border bg-white border-gray-300 p-2 rounded text-sm"
+                    className="bpurchase bg-white bpurchase-gray-300 p-2 rounded text-sm"
                     step={0.01}
                     min={0.01}
                     value={Number.isFinite(row.unitPrice) ? row.unitPrice : 0}
@@ -534,7 +598,7 @@ export default function AddPurchaseForm({
                   <span className="block text-xs text-gray-700 mb-1">
                     Line Total (excl. tax)
                   </span>
-                  <div className="border bg-gray-50 border-gray-300 p-2 rounded text-sm font-mono">
+                  <div className="bpurchase bg-gray-50 bpurchase-gray-300 p-2 rounded text-sm font-mono">
                     {formatMoney(lineTotalExcl, currency)}
                   </div>
                 </div>
@@ -545,7 +609,7 @@ export default function AddPurchaseForm({
                     type="button"
                     onClick={() => removeRow(index)}
                     title="Remove Item"
-                    className="mt-[22px] bg-gray-100 hover:bg-gray-200 text-red-500 w-8 h-8 justify-center rounded-full border border-gray-300 flex items-center shadow-sm transition"
+                    className="mt-[22px] bg-gray-100 hover:bg-gray-200 text-red-500 w-8 h-8 justify-center rounded-full bpurchase bpurchase-gray-300 flex items-center shadow-sm transition"
                   >
                     <span className="text-red-500 font-bold text-xl">−</span>
                   </button>
@@ -555,55 +619,85 @@ export default function AddPurchaseForm({
           })}
         </div>
 
-        {/* Totals / Controls */}
+        {/* ===== Totals / Controls ===== */}
         <div className="text-right space-y-1">
           <div className="text-base font-semibold">
             Total (excl. tax):{" "}
             <span className="font-mono">
-              {formatMoney(totals.base, currency)}
+              {formatMoney(totals.excl, currency)}
             </span>
           </div>
 
-          <div className="text-sm text-gray-700">
+          {/* Total tax: disabled when Exclusive */}
+          <div
+            className={`text-sm ${
+              taxInclusive ? "text-gray-700" : "text-gray-400"
+            }`}
+          >
             Total tax:{" "}
             <span className="font-mono">
-              {formatMoney(totals.tax, currency)}
+              {taxInclusive ? formatMoney(totals.tax, currency) : "—"}
             </span>
           </div>
 
-          {/* Tax components */}
+          {/* + Add Tax Component (between Total tax and Total incl. tax) */}
           <div className="flex justify-end items-center gap-3">
+            {/* Remaining badge when inclusive */}
+            {taxInclusive && (
+              <span
+                className={`inline-block px-2 py-1 rounded text-xs font-mono ${
+                  remainingPct === 0
+                    ? "bg-green-100 text-green-700"
+                    : "bg-amber-100 text-amber-700"
+                }`}
+                title="Remaining percentage to reach 100%"
+              >
+                Remaining: {remainingPct.toFixed(2)}%
+              </span>
+            )}
             <button
               type="button"
               onClick={addTaxComponent}
-              disabled={taxComponents.length >= 2}
+              disabled={!taxInclusive || taxComponents.length >= 2}
               className={`px-2 py-1 rounded ${
-                taxComponents.length >= 2
+                !taxInclusive || taxComponents.length >= 2
                   ? "bg-gray-200 text-gray-500 cursor-not-allowed"
                   : "bg-gray-100 hover:bg-gray-200 text-cyan-700"
               }`}
-              title="Add tax component"
+              title={
+                taxInclusive
+                  ? "Add tax component"
+                  : "Disabled in exclusive mode"
+              }
             >
               + Add Tax Component
             </button>
           </div>
 
+          {/* Tax component rows */}
           {taxComponents.length > 0 && (
-            <div className="inline-block text-left border rounded-md p-2 bg-white border-gray-200">
+            <div
+              className={`inline-block text-left bpurchase rounded-md p-2 ${
+                taxInclusive
+                  ? "bg-white bpurchase-gray-200"
+                  : "bg-gray-100 bpurchase-gray-200 opacity-70"
+              }`}
+            >
               {taxComponents.map((tc, i) => (
                 <div key={i} className="flex items-center gap-2 my-1">
                   <input
                     type="text"
-                    className="border bg-white border-gray-300 p-1 rounded text-sm"
+                    className="bpurchase bg-white bpurchase-gray-300 p-1 rounded text-sm"
                     placeholder="Tax component name"
                     value={tc.name}
                     onChange={(e) =>
                       updateTaxComponent(i, { name: e.target.value })
                     }
+                    disabled={!taxInclusive}
                   />
                   <input
                     type="number"
-                    className="border bg-white border-gray-300 p-1 rounded text-sm w-24"
+                    className="bpurchase bg-white bpurchase-gray-300 p-1 rounded text-sm w-24"
                     placeholder="%"
                     step={0.01}
                     min={0}
@@ -613,17 +707,19 @@ export default function AddPurchaseForm({
                         percentage: Number(e.target.value),
                       })
                     }
+                    disabled={!taxInclusive}
                   />
                   <button
                     type="button"
                     className="text-red-600 px-2 py-1"
                     title="Remove component"
                     onClick={() => removeTaxComponent(i)}
+                    disabled={!taxInclusive}
                   >
                     ✕
                   </button>
 
-                  {/* Post fields */}
+                  {/* Post fields (server ignores in exclusive mode) */}
                   <input
                     type="hidden"
                     name="taxComponentName"
@@ -636,17 +732,26 @@ export default function AddPurchaseForm({
                   />
                 </div>
               ))}
+
+              {/* Helper hint when sum != 100 */}
+              {taxInclusive && !taxComponentsValid && (
+                <div className="text-xs text-amber-700 mt-1">
+                  Please split tax components to total exactly <b>100%</b>.
+                </div>
+              )}
             </div>
           )}
 
           <div className="text-lg font-bold">
             Total (incl. tax):{" "}
             <span className="font-mono">
-              {formatMoney(totals.incl, currency)}
+              {taxInclusive
+                ? formatMoney(totals.incl, currency)
+                : formatMoney(totals.excl, currency)}
             </span>
           </div>
 
-          {/* Additional Charges */}
+          {/* Additional Charges (only one) */}
           <div className="flex justify-end">
             <button
               type="button"
@@ -663,11 +768,11 @@ export default function AddPurchaseForm({
           </div>
 
           {additionalCharges && (
-            <div className="inline-block text-left border rounded-md p-2 bg-white border-gray-200">
+            <div className="inline-block text-left bpurchase rounded-md p-2 bg-white bpurchase-gray-200">
               <div className="flex items-center gap-2 my-1">
                 <input
                   type="text"
-                  className="border bg-white border-gray-300 p-1 rounded text-sm"
+                  className="bpurchase bg-white bpurchase-gray-300 p-1 rounded text-sm"
                   placeholder="Charge name"
                   value={additionalCharges.name}
                   onChange={(e) =>
@@ -679,7 +784,7 @@ export default function AddPurchaseForm({
                 />
                 <input
                   type="number"
-                  className="border bg-white border-gray-300 p-1 rounded text-sm w-28"
+                  className="bpurchase bg-white bpurchase-gray-300 p-1 rounded text-sm w-28"
                   placeholder="Amount"
                   step={0.01}
                   min={0}
@@ -719,30 +824,50 @@ export default function AddPurchaseForm({
             </div>
           )}
 
-          {/* Hidden fields for header */}
-          <input type="hidden" name="reference" value={reference} />
-          <input type="hidden" name="status" value={status} />
-          <input type="hidden" name="currency" value={currency} />
-
-          {/* Actions */}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={addRow}
-              className="bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded"
-            >
-              + Add Item
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-2 rounded font-semibold bg-cyan-400 hover:bg-cyan-500 text-white"
-              title="Create Purchase Order"
-            >
-              Create Purchase Order
-            </button>
+          {/* Grand Total */}
+          <div className="text-xl font-extrabold">
+            Grand Total:{" "}
+            <span className="font-mono">
+              {formatMoney(totals.grand, currency)}
+            </span>
           </div>
         </div>
+
+        {/* Form actions */}
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={addRow}
+            className="bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded"
+          >
+            + Add Item
+          </button>
+          <button
+            type="submit"
+            className={`px-4 py-2 rounded font-semibold ${
+              taxInclusive && !taxComponentsValid
+                ? "bg-gray-300 text-gray-600 cursor-not-allowed"
+                : "bg-cyan-400 hover:bg-cyan-500 text-white"
+            }`}
+            disabled={taxInclusive && !taxComponentsValid}
+            title={
+              taxInclusive && !taxComponentsValid
+                ? "Tax components must sum to exactly 100%"
+                : "Create Purchase"
+            }
+          >
+            Create Purchase
+          </button>
+        </div>
+
+        <h3 className="text-sm md:text-base font-light mb-2 italic">
+          Unit price is <b>always without tax</b>. Toggle “Inclusive” to apply
+          tax in totals and enable tax components; toggle “Exclusive” to omit
+          tax entirely. In inclusive mode, the tax components must split to{" "}
+          <b>exactly 100%</b>.
+        </h3>
       </form>
     </div>
   );
 }
+``;
