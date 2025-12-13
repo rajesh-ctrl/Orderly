@@ -23,7 +23,7 @@ export default async function Home() {
   const ordersByMonth = await prisma.$queryRaw<
     { month: string; total: number }[]
   >`
-    SELECT TO_CHAR("createdAt", 'Mon') AS month, SUM("totalAmount")::numeric AS total
+    SELECT TO_CHAR("createdAt", 'Mon') AS month, SUM("total")::numeric AS total
     FROM "Order"
     GROUP BY TO_CHAR("createdAt", 'Mon')
     ORDER BY MIN("createdAt") DESC
